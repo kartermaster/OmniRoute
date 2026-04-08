@@ -11,6 +11,11 @@ COPY scripts/native-binary-compat.mjs ./scripts/native-binary-compat.mjs
 RUN if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
 
 COPY . ./
+
+# 1. ВСТАВКА ДЛЯ БИЛДА (чтобы не было FATAL: JWT_SECRET is not set)
+ARG JWT_SECRET="EtqKjBPCdor5oH2e8uVKegiliqD+nvVm7uOru1zDYQFclUBdfHJA5iiSVIljI43g"
+ENV JWT_SECRET=$JWT_SECRET
+
 RUN mkdir -p /app/data && npm run build -- --webpack
 
 FROM node:22.22.2-trixie-slim AS runner-base
@@ -25,9 +30,14 @@ LABEL org.opencontainers.image.title="omniroute" \
 ENV NODE_ENV=production
 ENV PORT=20128
 ENV HOSTNAME=0.0.0.0
-ENV NODE_OPTIONS="--max-old-space-size=256"
 
-# Data directory inside Docker — must match the volume mount in docker-compose.yml
+# 2. ВСТАВКА ДЛЯ ИСПРАВЛЕНИЯ ОШИБКИ КИРО (fetch failed)
+# Добавляем флаг ipv4first в NODE_OPTIONS
+ENV NODE_OPTIONS="--max-old-space-size=256 --dns-result-order=ipv4first"
+# Прописываем секрет и для работы самого приложения
+ENV JWT_SECRET="EtqKjBPCdor5oH2e8uVKegiliqD+nvVm7uOru1zDYQFclUBdfHJA5iiSVIljI43g"
+
+# Data directory inside Docker
 ENV DATA_DIR=/app/data
 RUN apt-get update \
   && apt-get install -y --no-install-recommends libsecret-1-0 ca-certificates \
@@ -37,10 +47,7 @@ RUN mkdir -p /app/data
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/.next/standalone ./
-# Explicitly copy @swc/helpers — not always traced by standalone output but needed at runtime
 COPY --from=builder /app/node_modules/@swc/helpers ./node_modules/@swc/helpers
-# Explicitly copy pino transport dependencies — pino spawns a worker that requires
-# pino-abstract-transport at runtime; Next.js standalone trace does not capture it (#449)
 COPY --from=builder /app/node_modules/pino-abstract-transport ./node_modules/pino-abstract-transport
 COPY --from=builder /app/node_modules/pino-pretty ./node_modules/pino-pretty
 COPY --from=builder /app/node_modules/split2 ./node_modules/split2
@@ -58,11 +65,9 @@ CMD ["node", "run-standalone.mjs"]
 
 FROM runner-base AS runner-cli
 
-# Install system dependencies required by openclaw (git+ssh references).
 RUN apt-get update \
   && apt-get install -y --no-install-recommends git ca-certificates docker.io docker-compose \
   && rm -rf /var/lib/apt/lists/* \
   && git config --system url."https://github.com/".insteadOf "ssh://git@github.com/"
 
-# Install CLI tools globally. Separate layer from apt for better cache reuse.
 RUN npm install -g --no-audit --no-fund @openai/codex @anthropic-ai/claude-code droid openclaw@latest

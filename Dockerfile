@@ -1,4 +1,5 @@
-FROM node:22.22.2-trixie-slim AS builder
+# МЕНЯЕМ НА СТАБИЛЬНУЮ ВЕРСИЮ 20
+FROM node:20.18-slim AS builder
 WORKDIR /app
 
 RUN apt-get update \
@@ -12,32 +13,25 @@ RUN if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm inst
 
 COPY . ./
 
-# 1. ВСТАВКА ДЛЯ БИЛДА (чтобы не было FATAL: JWT_SECRET is not set)
+# Секрет для сборки
 ARG JWT_SECRET="EtqKjBPCdor5oH2e8uVKegiliqD+nvVm7uOru1zDYQFclUBdfHJA5iiSVIljI43g"
 ENV JWT_SECRET=$JWT_SECRET
 
 RUN mkdir -p /app/data && npm run build -- --webpack
 
-FROM node:22.22.2-trixie-slim AS runner-base
+# МЕНЯЕМ НА СТАБИЛЬНУЮ ВЕРСИЮ 20 ДЛЯ ЗАПУСКА
+FROM node:20.18-slim AS runner-base
 WORKDIR /app
-
-LABEL org.opencontainers.image.title="omniroute" \
-  org.opencontainers.image.description="Unified AI proxy — route any LLM through one endpoint" \
-  org.opencontainers.image.url="https://omniroute.online" \
-  org.opencontainers.image.source="https://github.com/diegosouzapw/OmniRoute" \
-  org.opencontainers.image.licenses="MIT"
 
 ENV NODE_ENV=production
 ENV PORT=20128
 ENV HOSTNAME=0.0.0.0
 
-# 2. ВСТАВКА ДЛЯ ИСПРАВЛЕНИЯ ОШИБКИ КИРО (fetch failed)
-# Добавляем флаг ipv4first в NODE_OPTIONS
-ENV NODE_OPTIONS="--max-old-space-size=256 --dns-result-order=ipv4first"
-# Прописываем секрет и для работы самого приложения
+# Отключаем экспериментальный fetch (в Node 20 это можно сделать без поломки Next.js)
+# И добавляем приоритет IPv4
+ENV NODE_OPTIONS="--max-old-space-size=256 --no-experimental-fetch --dns-result-order=ipv4first"
 ENV JWT_SECRET="EtqKjBPCdor5oH2e8uVKegiliqD+nvVm7uOru1zDYQFclUBdfHJA5iiSVIljI43g"
 
-# Data directory inside Docker
 ENV DATA_DIR=/app/data
 RUN apt-get update \
   && apt-get install -y --no-install-recommends libsecret-1-0 ca-certificates \
